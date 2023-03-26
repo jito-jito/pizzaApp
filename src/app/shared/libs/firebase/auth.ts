@@ -2,6 +2,7 @@ import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, on
 import { Injectable } from '@angular/core';
 import { Subject, Observable } from "rxjs";
 import { FirebaseMainService } from "./main";
+import { FirebaseDbService } from "./db";
 
 
 @Injectable({
@@ -15,18 +16,28 @@ export class FirebaseAuthService {
   $userSession = this.userSession.asObservable()
 
   constructor(
-    private _firebaseMain : FirebaseMainService
+    private _firebaseMain : FirebaseMainService,
+    private _firebaseDb : FirebaseDbService
   ) { 
     this._firebaseMain.firebaseInit()
     this.auth = getAuth();
 
-    onAuthStateChanged(this.auth, (userLogged) => {
+    onAuthStateChanged(this.auth, async (userLogged) => {
       if (userLogged) {
         // Has user logged
-        this.userSession.next({
-            providerData: userLogged.providerData,
-            uid: userLogged.uid
-        })
+        try {
+          const dbResp = await this._firebaseDb.getUser(userLogged.uid)
+
+          this.userSession.next({
+              providerData: {...dbResp.userData},
+              uid: dbResp.userData.uid
+          })
+        } catch (error: any) {
+          throw ({
+            ...error
+          })
+        }
+   
       } else {
         // User is signed out
         this.userSession.next(null)
@@ -34,18 +45,24 @@ export class FirebaseAuthService {
     });
   }
 
-  registerUser(email: string, password: string) {
+  registerUser(email: string, password: string, role: string, alias: string) {
     return new Observable((subscriber) => {
       createUserWithEmailAndPassword(this.auth, email, password)
         .then((userCredential) => {
           // Signed in
           const user = userCredential.user
 
+          return this._firebaseDb.createUser(user.uid, email, alias, role)
+        })
+        .then((dbResp) => {
+
           subscriber.next({
             status: 'ok',
-            providerData: user.providerData,
-            uid: user.uid
+            providerData: {
+              ...dbResp.userData
+            }
           })
+
           subscriber.complete()
         })
         .catch((error) => {
@@ -68,10 +85,14 @@ export class FirebaseAuthService {
         // Signed in
         const user = userCredential.user;
         
+        return this._firebaseDb.getUser(user.uid)
+      })
+      .then((dbResp) => {
+
+        console.log(dbResp)
         subscriber.next({
           status: 'ok',
-          providerData: user.providerData,
-          uid: user.uid
+          providerData: {...dbResp.userData}
         })
         subscriber.complete()
       })
@@ -104,7 +125,6 @@ export class FirebaseAuthService {
     return new Observable((subscriber) => {
       signOut(this.auth).then(() => {
         // Sign-out successful.
-        console.log('user logout')
         subscriber.next({
           status: 'ok'
         })
